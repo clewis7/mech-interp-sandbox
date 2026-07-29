@@ -1,3 +1,5 @@
-fastplotlib[notebook, imgui]
+pygfx
+rendercanvas
 tinygrad
 ruff
+gflw
