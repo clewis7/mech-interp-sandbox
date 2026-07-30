@@ -3,3 +3,4 @@ rendercanvas
 tinygrad
 ruff
 gflw
+fastplotlib[imgui]
