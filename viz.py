@@ -91,7 +91,7 @@ def map2d_to_rgba(m: Tensor) -> Tensor:
 
 
 # ---------------- 5. scene ----------------
-scene = figure[0,0].scene
+scene = figure[0, 0].scene
 
 
 def make_label(text, pos, size=14, color="#dddddd", anchor="middle-center"):
@@ -280,10 +280,18 @@ def probe_views():
 # ---------------- 2. guis ----------------
 class MenuGUI(EdgeWindow):
     def __init__(self, figure, size, location, title):
-        super().__init__(figure=figure, size=size, location=location, title=title, window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize)
+        super().__init__(
+            figure=figure,
+            size=size,
+            location=location,
+            title=title,
+            window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize,
+        )
         self._step = 0
         self._loss_hist: list[float] = []
         self._stripe_hist: list[list[float]] = [[] for _ in range(N_HEADS)]
+
+        self._paused = False
 
     def update(self):
 
@@ -304,34 +312,49 @@ class MenuGUI(EdgeWindow):
             if i > 0:
                 imgui.same_line()
             if imgui.button(label):
+                if label == "Pause":
+                    self._paused = True
+                    print(f"Training paused, step {self._step}")
                 if label == "Train":
-                    if self._step > MAX_STEP:
-                        return
+                    self._paused = False
 
-                    last_loss = None
-                    for _ in range(STEPS_PER_FRAME):
-                        last_loss = train_step()
-                        self._step += 1
-                    self._loss_hist.append(max(last_loss.item(), 1e-6))  # scalar readback
+        if not self._paused:
+            if self._step > MAX_STEP:
+                return
 
-                    pat_mean, pos_loss, stripe = probe_views()
-                    for h in range(N_HEADS):
-                        copy_to_texture(map2d_to_rgba(pat_mean[h]), head_tiles[h])
-                        self._stripe_hist[h].append(float(stripe[h]))
-                    copy_to_texture(map2d_to_rgba(pos_loss), strip_tex)
+            last_loss = None
+            for _ in range(STEPS_PER_FRAME):
+                last_loss = train_step()
+                self._step += 1
+            self._loss_hist.append(max(last_loss.item(), 1e-6))  # scalar readback
 
-                    update_line(loss_geom, [math.log10(v) for v in self._loss_hist], LOG_LO, LOG_HI)
-                    for h in range(N_HEADS):
-                        update_line(stripe_geoms[h], self._stripe_hist[h], 0.0, 1.0)
+            pat_mean, pos_loss, stripe = probe_views()
+            for h in range(N_HEADS):
+                copy_to_texture(map2d_to_rgba(pat_mean[h]), head_tiles[h])
+                self._stripe_hist[h].append(float(stripe[h]))
+            copy_to_texture(map2d_to_rgba(pos_loss), strip_tex)
 
-                    if self._step % 25 < STEPS_PER_FRAME:
-                        print(f"step {self._step:4d}  loss {self._loss_hist[-1]:.4f}  stripe {np.round(stripe, 2)}")
+            update_line(
+                loss_geom, [math.log10(v) for v in self._loss_hist], LOG_LO, LOG_HI
+            )
+            for h in range(N_HEADS):
+                update_line(stripe_geoms[h], self._stripe_hist[h], 0.0, 1.0)
+
+            if self._step % 25 < STEPS_PER_FRAME:
+                print(
+                    f"step {self._step:4d}  loss {self._loss_hist[-1]:.4f}  stripe {np.round(stripe, 2)}"
+                )
 
 
 class EdgeGUI(EdgeWindow):
     def __init__(self, figure, size, location, title):
-        super().__init__(figure=figure, size=size, location=location, title=title,
-                         window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize)
+        super().__init__(
+            figure=figure,
+            size=size,
+            location=location,
+            title=title,
+            window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize,
+        )
 
         self._learning_rate = 1e-3
 
@@ -339,12 +362,7 @@ class EdgeGUI(EdgeWindow):
         # learning rate slider
         imgui.text("lr:")
         imgui.same_line()
-        changed, lr = imgui.slider_float(
-            "##LR",
-            self._learning_rate,
-            1e-6,
-            1e-1
-        )
+        changed, lr = imgui.slider_float("##LR", self._learning_rate, 1e-6, 1e-1)
 
         if changed:
             self._learning_rate = lr
@@ -360,17 +378,19 @@ gui = MenuGUI(
     title=" ",  # window title
 )
 
-gui2 = EdgeGUI(
-    figure,
-    size = 200,
-    location="right",
-    title="Training Params"
-)
+gui2 = EdgeGUI(figure, size=200, location="right", title="Training Params")
 
 # add guis to the figure
 figure.add_gui(gui)
 figure.add_gui(gui2)
+
+figure[0, 0].camera.show_object(
+    figure[0, 0].scene, view_dir=(0, 0, -1), up=(0, 1, 0), scale=0.7
+)
+figure[0, 0].controller.enabled = False
+
 figure.show()
+
 
 # NOTE: fpl.loop.run() should not be used for interactive sessions
 # See the "JupyterLab and IPython" section in the user guide

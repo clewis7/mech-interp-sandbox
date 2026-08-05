@@ -14,6 +14,7 @@ Hook your viz in via `on_step` — it receives (step, loss, model) after each
 optimizer step; model.acts holds the current batch's activations as on-device
 Tensors, e.g. model.acts["attn_pattern"][0, h] is a (T, T) map for head h.
 """
+
 from __future__ import annotations
 
 import math
