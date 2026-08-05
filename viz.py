@@ -295,7 +295,12 @@ class MenuGUI(EdgeWindow):
 
     def update(self):
 
-        labels = ["Train", "Pause", "Checkpoint", "Load Checkpoint"]
+        labels = ["Checkpoint", "Load Checkpoint"]
+
+        if self._paused:
+            labels.insert(0, "Train")
+        else:
+            labels.insert(0, "Pause")
 
         # total width = buttons + spacing between them
         style = imgui.get_style()
@@ -312,11 +317,10 @@ class MenuGUI(EdgeWindow):
             if i > 0:
                 imgui.same_line()
             if imgui.button(label):
-                if label == "Pause":
-                    self._paused = True
-                    print(f"Training paused, step {self._step}")
-                if label == "Train":
-                    self._paused = False
+                if label in ["Pause", "Train"]:
+                    self._paused = not self._paused
+                    if self._paused:
+                        print(f"Training paused, step {self._step}")
 
         if not self._paused:
             if self._step > MAX_STEP:
@@ -356,7 +360,7 @@ class EdgeGUI(EdgeWindow):
             window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize,
         )
 
-        self._learning_rate = 1e-3
+        self._learning_rate = LR
 
     def update(self):
         # learning rate slider
@@ -366,6 +370,7 @@ class EdgeGUI(EdgeWindow):
 
         if changed:
             self._learning_rate = lr
+            opt.lr = self._learning_rate
 
         # data distribution changes
 
