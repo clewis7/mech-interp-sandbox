@@ -25,6 +25,7 @@ STEPS_PER_FRAME = 1  # raise to train faster than you render
 MAX_PTS = 4000  # points kept in the line plots
 MAX_STEP = 300
 HEAD_COLORS = ["#66d9ff", "#7dff9e", "#ffb066", "#ff7de1"]
+ABLATE = [False] * N_HEADS
 
 # ---------------- 1. shared device ----------------
 figure = fpl.Figure(size=(1180, 760), names=[" "])
@@ -59,11 +60,15 @@ model = Transformer(vocab=VOCAB, seq_len=SEQ, n_heads=N_HEADS)
 opt = nn.optim.Adam(model.parameters(), lr=LR)
 
 
+def head_mask():
+    return Tensor([0.0 if a else 1.0 for a in ABLATE]).realize()
+
+
 def train_step() -> Tensor:
     with Tensor.train():
         opt.zero_grad()
         tokens = make_batch(BATCH)
-        preds = model(tokens)[:, HALF - 1 : SEQ - 1]  # predict the repeat
+        preds = model(tokens, head_mask())[:, HALF - 1 : SEQ - 1]  # predict the repeat
         loss = (
             preds.reshape(-1, VOCAB)
             .sparse_categorical_crossentropy(tokens[:, HALF:SEQ].reshape(-1))
@@ -285,7 +290,9 @@ class MenuGUI(EdgeWindow):
             size=size,
             location=location,
             title=title,
-            window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize,
+            window_flags=imgui.WindowFlags_.no_title_bar
+            | imgui.WindowFlags_.no_resize
+            | imgui.WindowFlags_.no_scrollbar,
         )
         self._step = 0
         self._loss_hist: list[float] = []
@@ -362,7 +369,17 @@ class EdgeGUI(EdgeWindow):
 
         self._learning_rate = LR
 
+    def _make_title(self, text: str):
+        imgui.separator()
+        avail = imgui.get_content_region_avail().x
+        text_w = imgui.calc_text_size(text).x
+        imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + (avail - text_w) * 0.5)
+        imgui.text(text)
+        imgui.separator()
+
     def update(self):
+        self._make_title("Learning Rate")
+
         # learning rate slider
         imgui.text("lr:")
         imgui.same_line()
@@ -371,6 +388,14 @@ class EdgeGUI(EdgeWindow):
         if changed:
             self._learning_rate = lr
             opt.lr = self._learning_rate
+
+        self._make_title("Head Ablation")
+
+        for i in range(N_HEADS):
+            changed, _ = imgui.checkbox(f"h{i}", ABLATE[i])
+            if changed:
+                ABLATE[i] = _
+            imgui.same_line()
 
         # data distribution changes
 
