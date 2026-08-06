@@ -301,6 +301,13 @@ class MenuGUI(EdgeWindow):
         self._paused = False
 
     def update(self):
+        global model, opt
+        if imgui.button("Restart"):
+            model = Transformer(vocab=VOCAB, seq_len=SEQ, n_heads=N_HEADS)
+            opt = nn.optim.Adam(model.parameters(), lr=LR)
+            self._step = 0
+
+        imgui.same_line()
 
         labels = ["Checkpoint", "Load Checkpoint"]
 
@@ -396,6 +403,11 @@ class EdgeGUI(EdgeWindow):
             if changed:
                 ABLATE[i] = _
             imgui.same_line()
+
+        self._make_title("Parameter Freeze")
+
+        for i, param in enumerate(["w_q", "w_k", "w_v", "w_o"]):
+            changed, _ = imgui.checkbox(param, False)
 
         # data distribution changes
 
