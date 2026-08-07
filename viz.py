@@ -298,7 +298,7 @@ class MenuGUI(EdgeWindow):
         self._loss_hist: list[float] = []
         self._stripe_hist: list[list[float]] = [[] for _ in range(N_HEADS)]
 
-        self._paused = False
+        self._paused = True
 
     def update(self):
         global model, opt
@@ -402,14 +402,8 @@ class EdgeGUI(EdgeWindow):
             changed, _ = imgui.checkbox(f"h{i}", ABLATE[i])
             if changed:
                 ABLATE[i] = _
-            imgui.same_line()
-
-        self._make_title("Parameter Freeze")
-
-        for i, param in enumerate(["w_q", "w_k", "w_v", "w_o"]):
-            changed, _ = imgui.checkbox(param, False)
-
-        # data distribution changes
+            if i != N_HEADS - 1:
+                imgui.same_line()
 
 
 # make GUI instance
