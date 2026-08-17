@@ -1,30 +1,16 @@
-"""Train the attention-only transformer on a synthetic induction task.
-
-Task: each sequence is a random token string whose second half repeats the
-first half exactly:  [x0 .. x31 | x0 .. x31].  The second half is perfectly
-predictable by an induction mechanism , so loss is computed only there. A
-1-layer attention-only model solves this with a previous-token-ish /
-induction-stripe pattern you can literally watch form in acts["attn_pattern"].
-
-Usage:
-    python train_induction.py                    # CPU/default device
-    DEVICE=WEBGPU python train_induction.py      # after install_shared_webgpu()
-
-Hook your viz in via `on_step` — it receives (step, loss, model) after each
-optimizer step; model.acts holds the current batch's activations as on-device
-Tensors, e.g. model.acts["attn_pattern"][0, h] is a (T, T) map for head h.
-"""
-
 from __future__ import annotations
 
-import math
+import fastplotlib as fpl
 
+from fastplotlib.ui import EdgeWindow
+from imgui_bundle import imgui
+
+import math
 import numpy as np
 import pygfx as gfx
 import wgpu
 from pygfx.renderers.wgpu import get_shared
 from pygfx.renderers.wgpu.engine.update import ensure_wgpu_object
-from rendercanvas.auto import RenderCanvas, loop
 from tinygrad import Tensor, nn
 
 import tg_wgpu_shared as S
@@ -39,14 +25,16 @@ STEPS_PER_FRAME = 1  # raise to train faster than you render
 MAX_PTS = 4000  # points kept in the line plots
 MAX_STEP = 300
 HEAD_COLORS = ["#66d9ff", "#7dff9e", "#ffb066", "#ff7de1"]
+ABLATE = [False] * N_HEADS
 
 # ---------------- 1. shared device ----------------
-canvas = RenderCanvas(size=(1180, 760), title="Synthetic induction task")
-renderer = gfx.renderers.WgpuRenderer(canvas)
+figure = fpl.Figure(size=(1180, 760), names=[" "])
+figure.canvas.set_title("Synthetic Induction Task")
+figure[0, 0].axes.visible = False
 wdev = get_shared().device
 dev = S.install_shared_webgpu(wdev, name="WEBGPU")
 
-# ---------------- 2. data: induction batches + fixed probe ----------------
+# ---------------- 3. data: induction batches + fixed probe ----------------
 rng = np.random.default_rng(0)
 
 
@@ -66,17 +54,21 @@ for i in range(HALF, SEQ):
     _m[i, i - HALF + 1] = 1.0
 STRIPE_MASK = Tensor(_m).realize()
 
-# ---------------- 3. model + training step ----------------
+# ---------------- 4. model + training step ----------------
 # constructed AFTER install_shared_webgpu(set_default=True): weights, causal
 model = Transformer(vocab=VOCAB, seq_len=SEQ, n_heads=N_HEADS)
 opt = nn.optim.Adam(model.parameters(), lr=LR)
+
+
+def head_mask():
+    return Tensor([0.0 if a else 1.0 for a in ABLATE]).realize()
 
 
 def train_step() -> Tensor:
     with Tensor.train():
         opt.zero_grad()
         tokens = make_batch(BATCH)
-        preds = model(tokens)[:, HALF - 1 : SEQ - 1]  # predict the repeat
+        preds = model(tokens, head_mask())[:, HALF - 1 : SEQ - 1]  # predict the repeat
         loss = (
             preds.reshape(-1, VOCAB)
             .sparse_categorical_crossentropy(tokens[:, HALF:SEQ].reshape(-1))
@@ -104,8 +96,7 @@ def map2d_to_rgba(m: Tensor) -> Tensor:
 
 
 # ---------------- 5. scene ----------------
-scene = gfx.Scene()
-scene.add(gfx.Background(None, gfx.BackgroundMaterial("#141414")))
+scene = figure[0, 0].scene
 
 
 def make_label(text, pos, size=14, color="#dddddd", anchor="middle-center"):
@@ -253,7 +244,7 @@ def update_line(geom, ys, lo, hi):
         geom.positions.update_range(0, MAX_PTS)
 
 
-camera = gfx.OrthographicCamera(1180, 760)
+camera = figure[0, 0].camera
 camera.local.position = (590, 380, 0)
 
 
@@ -291,42 +282,154 @@ def probe_views():
     return pat_mean, pos_loss, stripe
 
 
-# ---------------- 8. animation loop ----------------
-step = 0
-loss_hist: list[float] = []
-stripe_hist: list[list[float]] = [[] for _ in range(N_HEADS)]
+# ---------------- 2. guis ----------------
+class MenuGUI(EdgeWindow):
+    def __init__(self, figure, size, location, title):
+        super().__init__(
+            figure=figure,
+            size=size,
+            location=location,
+            title=title,
+            window_flags=imgui.WindowFlags_.no_title_bar
+            | imgui.WindowFlags_.no_resize
+            | imgui.WindowFlags_.no_scrollbar,
+        )
+        self._step = 0
+        self._loss_hist: list[float] = []
+        self._stripe_hist: list[list[float]] = [[] for _ in range(N_HEADS)]
+
+        self._paused = True
+
+    def update(self):
+        global model, opt
+        if imgui.button("Restart"):
+            model = Transformer(vocab=VOCAB, seq_len=SEQ, n_heads=N_HEADS)
+            opt = nn.optim.Adam(model.parameters(), lr=LR)
+            self._step = 0
+
+        imgui.same_line()
+
+        labels = ["Checkpoint", "Load Checkpoint"]
+
+        if self._paused:
+            labels.insert(0, "Train")
+        else:
+            labels.insert(0, "Pause")
+
+        # total width = buttons + spacing between them
+        style = imgui.get_style()
+        spacing = style.item_spacing.x
+        total_width = sum(
+            imgui.calc_text_size(l).x + style.frame_padding.x * 2 for l in labels
+        ) + spacing * (len(labels) - 1)
+
+        # push cursor to the right edge
+        avail = imgui.get_content_region_avail().x
+        imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + avail - total_width)
+
+        for i, label in enumerate(labels):
+            if i > 0:
+                imgui.same_line()
+            if imgui.button(label):
+                if label in ["Pause", "Train"]:
+                    self._paused = not self._paused
+                    if self._paused:
+                        print(f"Training paused, step {self._step}")
+
+        if not self._paused:
+            if self._step > MAX_STEP:
+                return
+
+            last_loss = None
+            for _ in range(STEPS_PER_FRAME):
+                last_loss = train_step()
+                self._step += 1
+            self._loss_hist.append(max(last_loss.item(), 1e-6))  # scalar readback
+
+            pat_mean, pos_loss, stripe = probe_views()
+            for h in range(N_HEADS):
+                copy_to_texture(map2d_to_rgba(pat_mean[h]), head_tiles[h])
+                self._stripe_hist[h].append(float(stripe[h]))
+            copy_to_texture(map2d_to_rgba(pos_loss), strip_tex)
+
+            update_line(
+                loss_geom, [math.log10(v) for v in self._loss_hist], LOG_LO, LOG_HI
+            )
+            for h in range(N_HEADS):
+                update_line(stripe_geoms[h], self._stripe_hist[h], 0.0, 1.0)
+
+            if self._step % 25 < STEPS_PER_FRAME:
+                print(
+                    f"step {self._step:4d}  loss {self._loss_hist[-1]:.4f}  stripe {np.round(stripe, 2)}"
+                )
 
 
-def animate():
-    global step
+class EdgeGUI(EdgeWindow):
+    def __init__(self, figure, size, location, title):
+        super().__init__(
+            figure=figure,
+            size=size,
+            location=location,
+            title=title,
+            window_flags=imgui.WindowFlags_.no_title_bar | imgui.WindowFlags_.no_resize,
+        )
 
-    if step > MAX_STEP:
-        return
+        self._learning_rate = LR
 
-    last_loss = None
-    for _ in range(STEPS_PER_FRAME):
-        last_loss = train_step()
-        step += 1
-    loss_hist.append(max(last_loss.item(), 1e-6))  # scalar readback
+    def _make_title(self, text: str):
+        imgui.separator()
+        avail = imgui.get_content_region_avail().x
+        text_w = imgui.calc_text_size(text).x
+        imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + (avail - text_w) * 0.5)
+        imgui.text(text)
+        imgui.separator()
 
-    pat_mean, pos_loss, stripe = probe_views()
-    for h in range(N_HEADS):
-        copy_to_texture(map2d_to_rgba(pat_mean[h]), head_tiles[h])
-        stripe_hist[h].append(float(stripe[h]))
-    copy_to_texture(map2d_to_rgba(pos_loss), strip_tex)
+    def update(self):
+        self._make_title("Learning Rate")
 
-    update_line(loss_geom, [math.log10(v) for v in loss_hist], LOG_LO, LOG_HI)
-    for h in range(N_HEADS):
-        update_line(stripe_geoms[h], stripe_hist[h], 0.0, 1.0)
+        # learning rate slider
+        imgui.text("lr:")
+        imgui.same_line()
+        changed, lr = imgui.slider_float("##LR", self._learning_rate, 1e-6, 1e-1)
 
-    if step % 25 < STEPS_PER_FRAME:
-        print(f"step {step:4d}  loss {loss_hist[-1]:.4f}  stripe {np.round(stripe, 2)}")
-    renderer.render(scene, camera)
-    canvas.request_draw()
+        if changed:
+            self._learning_rate = lr
+            opt.lr = self._learning_rate
+
+        self._make_title("Head Ablation")
+
+        for i in range(N_HEADS):
+            changed, _ = imgui.checkbox(f"h{i}", ABLATE[i])
+            if changed:
+                ABLATE[i] = _
+            if i != N_HEADS - 1:
+                imgui.same_line()
 
 
-canvas.request_draw(animate)
+# make GUI instance
+gui = MenuGUI(
+    figure,  # the figure this GUI instance should live inside
+    size=30,  # width or height of the GUI window within the figure
+    location="top",  # the edge to place this window at
+    title=" ",  # window title
+)
 
+gui2 = EdgeGUI(figure, size=200, location="right", title="Training Params")
+
+# add guis to the figure
+figure.add_gui(gui)
+figure.add_gui(gui2)
+
+figure[0, 0].camera.show_object(
+    figure[0, 0].scene, view_dir=(0, 0, -1), up=(0, 1, 0), scale=0.7
+)
+figure[0, 0].controller.enabled = False
+
+figure.show()
+
+
+# NOTE: fpl.loop.run() should not be used for interactive sessions
+# See the "JupyterLab and IPython" section in the user guide
 if __name__ == "__main__":
-    print("training induction transformer on the shared device")
-    loop.run()
+    print(__doc__)
+    fpl.loop.run()

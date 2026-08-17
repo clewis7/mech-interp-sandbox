@@ -50,7 +50,7 @@ class Transformer:
         B, T, _ = x.shape
         return x.reshape(B, T, self.n_heads, self.d_head).transpose(1, 2)
 
-    def __call__(self, tokens: Tensor) -> Tensor:
+    def __call__(self, tokens: Tensor, head_mask=None) -> Tensor:
         B, T = tokens.shape
         a = self.acts
         a.clear()
@@ -73,6 +73,8 @@ class Transformer:
         a["attn_pattern"] = pattern  # (B, H, T, T) — the money plot
 
         z = pattern @ v  # (B, H, T, d_head)
+        if head_mask is not None:
+            z = z * head_mask.reshape(1, self.n_heads, 1, 1)
         attn_out = self.w_o(z.transpose(1, 2).reshape(B, T, self.d_model))
         a["attn_out"] = attn_out
 
