@@ -424,6 +424,52 @@ def color_by_index(n, cmap="turbo"):
 
     return mpl.colormaps[cmap](np.linspace(0, 1, n)).astype(np.float32)
 
+
+UNCOMMITTED_COLOR = (0.45, 0.47, 0.50, 1.0)
+
+
+def color_by_commitment(commit_res, vmin, vmax, cmap="viridis"):
+    """Per-residue RGBA from commitment step. NaN renders grey, not clamped.
+
+    vmin/vmax must span the full sweep (0 to n_states-1) rather than the range
+    of whatever survives a mask — otherwise a residue's colour drifts as you
+    scrub, which makes the panel unreadable.
+    """
+    import matplotlib as mpl
+    v = np.asarray(commit_res, dtype=float)
+    ok = ~np.isnan(v)
+    out = np.tile(np.array(UNCOMMITTED_COLOR, np.float32), (len(v), 1))
+    if ok.any():
+        t = (v[ok] - vmin) / max(vmax - vmin, 1e-9)
+        out[ok] = mpl.colormaps[cmap](np.clip(t, 0, 1))
+    return out.astype(np.float32)
+
+
+def commitment_colors_at(commit_res, ribbon_data, t, vmin, vmax, cmap="viridis"):
+    """Per-vertex RGBA showing only what has committed by step `t`."""
+    v = np.asarray(commit_res, dtype=float).copy()
+    v[v > t] = np.nan
+    rc = color_by_commitment(v, vmin, vmax, cmap)
+    return rc[ribbon_data["vert_res"]].astype(np.float32)
+
+
+def commitment_from_sweep(pc, target_mask, thresh=0.5):
+    """(pair-wise commitment step, per-residue commitment step) from a sweep.
+
+    pc: (n_rec, n_blk, L, L) contact probabilities
+    target_mask: (L, L) bool — which contacts count, e.g. final_cm & (|i-j| > 12)
+    """
+    L = pc.shape[-1]
+    flat = pc.reshape(-1, L, L)
+    pair = np.full((L, L), np.nan)
+    for t in range(len(flat)):
+        newly = (flat[t] > thresh) & target_mask & np.isnan(pair)
+        pair[newly] = t
+    with np.errstate(invalid="ignore"):
+        per_res = np.nanmin(np.where(np.isnan(pair), np.inf, pair), axis=1)
+    per_res[np.isinf(per_res)] = np.nan
+    return pair, per_res
+
 # ----------------------------------------------------------------------------
 # Stats
 # ----------------------------------------------------------------------------

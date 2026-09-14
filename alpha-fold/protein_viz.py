@@ -6,7 +6,6 @@ import numpy as np
 from imgui_bundle import imgui
 from fastplotlib.ui import ImguiWindow
 import pygfx as gfx
-import pylinalg as la
 import ribbon
 
 
@@ -223,3 +222,8 @@ figure.show()
 
 if __name__ == "__main__":
     fpl.loop.run()
+
+    from PIL import Image
+
+    img = Image.fromarray(figure.renderer.snapshot(), mode="RGBA")
+    img.save("/home/caitlinlewis/Desktop/bah.png")
