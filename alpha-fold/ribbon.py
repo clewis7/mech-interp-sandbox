@@ -428,7 +428,7 @@ def color_by_index(n, cmap="turbo"):
 UNCOMMITTED_COLOR = (0.45, 0.47, 0.50, 1.0)
 
 
-def color_by_commitment(commit_res, vmin, vmax, cmap="viridis"):
+def color_by_commitment(commit_res, vmin, vmax, cmap="plasma"):
     """Per-residue RGBA from commitment step. NaN renders grey, not clamped.
 
     vmin/vmax must span the full sweep (0 to n_states-1) rather than the range
@@ -445,7 +445,7 @@ def color_by_commitment(commit_res, vmin, vmax, cmap="viridis"):
     return out.astype(np.float32)
 
 
-def commitment_colors_at(commit_res, ribbon_data, t, vmin, vmax, cmap="viridis"):
+def commitment_colors_at(commit_res, ribbon_data, t, vmin, vmax, cmap="plasma"):
     """Per-vertex RGBA showing only what has committed by step `t`."""
     v = np.asarray(commit_res, dtype=float).copy()
     v[v > t] = np.nan
