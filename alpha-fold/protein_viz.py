@@ -222,8 +222,3 @@ figure.show()
 
 if __name__ == "__main__":
     fpl.loop.run()
-
-    from PIL import Image
-
-    img = Image.fromarray(figure.renderer.snapshot(), mode="RGBA")
-    img.save("/home/caitlinlewis/Desktop/bah.png")
