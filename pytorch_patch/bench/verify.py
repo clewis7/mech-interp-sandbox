@@ -1,6 +1,6 @@
 # bench/verify.py
-import branchpoint, torch, numpy as np
-from bench.writers import get_offscreen_device, make_writer
+import torch, numpy as np
+from pytorch_patch.bench.writers import get_offscreen_device, make_writer
 
 device, _ = get_offscreen_device()
 SIZE, N = 2048, 200

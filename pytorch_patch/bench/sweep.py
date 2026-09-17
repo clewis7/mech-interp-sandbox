@@ -34,7 +34,7 @@ import torch
 torch.zeros(1, device="cuda")     # force torch's primary context first
 print(torch.cuda.current_device())
 
-from bench.writers import get_offscreen_device, make_writer
+from pytorch_patch.bench.writers import get_offscreen_device, make_writer
 
 DEFAULT_SIZES = [64, 128, 256, 512, 1024, 2048, 4096]
 DEFAULT_WRITERS = ["shared", "host", "host_naive"]
