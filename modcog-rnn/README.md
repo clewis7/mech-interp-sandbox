@@ -1,4 +1,4 @@
-# Live training task-based RNN compute and viz 
+# Live task-based RNN compute and viz 
 
 
 ### Install `Mod_Cog` from my fork 
