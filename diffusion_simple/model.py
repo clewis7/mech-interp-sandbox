@@ -175,6 +175,11 @@ def to_grid(x, nrow=4):
     return g.squeeze(-1) if c == 1 else g
 
 
+def to_images(x):
+    """(N,C,H,W) in [-1,1] -> (N,H,W,C) in [0,1], stays on device."""
+    return (x.permute(0, 2, 3, 1).clamp(-1, 1) + 1) * 0.5
+
+
 @torch.no_grad()
 def euler_sample(model, n, T, device, shape, seed=None, y=None):
     if seed is not None:
