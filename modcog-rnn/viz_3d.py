@@ -44,6 +44,7 @@ VIEW_LIM = 1.6
 
 ACC_EVERY = 200        # steps between validation accuracy checks
 ACC_BATCH = 2048
+Z_SCALE = 2.0
 
 # ----------------------------------- Data loading
 BANK_PATH = "modcog_bank.pt"
@@ -138,7 +139,7 @@ def quick_accuracy(n=ACC_BATCH):
 probe_x, probe_labels, probe_lens, _ = make_batch(probe_idx)
 projector = ProbeProjector(
     model, probe_x, probe_labels, probe_lens, ridge=L2_WEIGHT,
-    n_ring=bank["n_ring"], smooth=SMOOTH,
+    n_ring=bank["n_ring"], smooth=SMOOTH, z_mode="time", z_scale=Z_SCALE
 )
 projector.update(refit=True)
 
@@ -153,13 +154,15 @@ init_colors = projector.colors().cpu().numpy()
 
 figure = fpl.Figure(shape=(1,3),
                     size=(1400, 550),
-                    names=["base", "int", "seq"])
+                    names=["base", "int", "seq"],
+                    cameras="3d",
+                    controller_types="orbit",
+                    controller_ids="sync")
 
 
 for s in figure:
     s.axes.visible = False
     s.tooltip.enabled = False
-    s.controller.enabled = False
     s.toolbar = False
 
 
@@ -169,18 +172,24 @@ ring = np.column_stack([RING_RADIUS * np.cos(phi), RING_RADIUS * np.sin(phi), np
 graphics = {}
 for name in ["base", "int", "seq"]:
     s = figure[name]
-    s.add_line(ring, colors="w", thickness=2.0)
+    for z in (0.0, Z_SCALE):
+        ring_z = np.column_stack([
+            RING_RADIUS * np.cos(phi), RING_RADIUS * np.sin(phi), np.full_like(phi, z)
+        ])
+        s.add_line(ring_z, colors="w", thickness=2.0)
+    for a in np.arange(0, 2 * np.pi, np.pi / 2):
+        guide = np.array([[np.cos(a), np.sin(a), 0], [np.cos(a), np.sin(a), Z_SCALE]], dtype=np.float32)
+        s.add_line(guide, colors="w", thickness=2.0)
     sel = panel_sel[name]
     graphics[name] = s.add_line_collection(
         data=[init_positions[p] for p in sel],
         colors=[init_colors[p] for p in sel],
         thickness=1.0,
     )
-    s.camera.fov = 0
-    s.camera.show_rect(-VIEW_LIM, VIEW_LIM, -VIEW_LIM, VIEW_LIM)
+    s.auto_scale(maintain_aspect=True)
 
 
-add_color_wheel(figure["base"], VIEW_LIM)
+#add_color_wheel(figure["base"], VIEW_LIM)
 
 TITLE_TEXT = "step 0"
 

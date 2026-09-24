@@ -9,6 +9,8 @@ WHEEL_MARGIN = 0.22
 WHEEL_SEGMENTS = 128
 WHEEL_THICKNESS = 7.0
 
+Z_MODES = ("flat", "time")
+
 
 def add_color_wheel(subplot, lim):
     """Corner key: a ring colored by the same cyclic map used for the target direction.
@@ -100,6 +102,8 @@ class ProbeProjector:
         ridge: float,
         max_radius: float = DEFAULT_MAX_RADIUS,
         smooth: float = 0.0,
+        z_mode: str = "time",
+        z_scale: float = 2.0
     ):
         self.model = model
         self.x = x
@@ -109,6 +113,8 @@ class ProbeProjector:
         self.ridge = float(ridge)
         self.max_radius = float(max_radius)
         self.smooth = float(smooth)
+        self.z_mode = z_mode
+        self.z_scale = float(z_scale)
 
         self.n_probe, self.n_steps = labels.shape
         self.device = x.device
@@ -126,6 +132,12 @@ class ProbeProjector:
         self.freeze_idx = torch.minimum(steps[None], (lengths - 1)[:, None])
 
         self.positions = torch.zeros(self.n_probe, self.n_steps, 3, device=self.device)
+
+        if z_mode == "time":
+            #frac = steps[None] / (self.n_steps - 1)
+            frac = (steps[None] / (lengths - 1).clamp_min(1)[:, None]).clamp(0, 1)
+            self.positions[..., 2] = frac * self.z_scale
+
         self._colors = None
 
     @torch.no_grad()
