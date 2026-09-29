@@ -22,7 +22,8 @@ def add_color_wheel(subplot, lim):
     theta = torch.linspace(0, 2 * torch.pi, WHEEL_SEGMENTS + 1, device="cuda")
 
     xy = torch.stack(
-        [cx + WHEEL_RADIUS * torch.cos(theta), cy + WHEEL_RADIUS * torch.sin(theta)], dim=-1
+        [cx + WHEEL_RADIUS * torch.cos(theta), cy + WHEEL_RADIUS * torch.sin(theta)],
+        dim=-1,
     )
     positions = torch.cat([xy, torch.zeros_like(xy[:, :1])], dim=-1)
 
@@ -103,7 +104,7 @@ class ProbeProjector:
         max_radius: float = DEFAULT_MAX_RADIUS,
         smooth: float = 0.0,
         z_mode: str = "time",
-        z_scale: float = 2.0
+        z_scale: float = 2.0,
     ):
         self.model = model
         self.x = x
@@ -134,7 +135,7 @@ class ProbeProjector:
         self.positions = torch.zeros(self.n_probe, self.n_steps, 3, device=self.device)
 
         if z_mode == "time":
-            #frac = steps[None] / (self.n_steps - 1)
+            # frac = steps[None] / (self.n_steps - 1)
             frac = (steps[None] / (lengths - 1).clamp_min(1)[:, None]).clamp(0, 1)
             self.positions[..., 2] = frac * self.z_scale
 
@@ -155,8 +156,10 @@ class ProbeProjector:
         unit = self.hidden() if unit is None else unit
         h = unit[self.resp]
         gram = h.T @ h
-        reg = self.ridge * h.shape[0] * torch.eye(
-            h.shape[1], device=h.device, dtype=h.dtype
+        reg = (
+            self.ridge
+            * h.shape[0]
+            * torch.eye(h.shape[1], device=h.device, dtype=h.dtype)
         )
         self.w = torch.linalg.solve(gram + reg, h.T @ self.target)
 
@@ -173,14 +176,16 @@ class ProbeProjector:
         if refit or self.w is None:
             self.refit(unit)
 
-        decoded = unit @ self.w                                    # (P, T, 2)
+        decoded = unit @ self.w  # (P, T, 2)
         decoded = decoded.gather(1, self.freeze_idx[..., None].expand(-1, -1, 2))
 
         radius = decoded.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         decoded = decoded * (radius.clamp(max=self.max_radius) / radius)
 
         if self.smooth > 0:
-            self.positions[..., :2].mul_(self.smooth).add_(decoded, alpha=1 - self.smooth)
+            self.positions[..., :2].mul_(self.smooth).add_(
+                decoded, alpha=1 - self.smooth
+            )
         else:
             self.positions[..., :2].copy_(decoded)
         return self.positions
@@ -195,11 +200,21 @@ class ProbeProjector:
             rgba = torch.cat([rgb, torch.ones_like(rgb[..., :1])], dim=-1)
 
             # hold steps ramp from GRAY_EARLY at t=0 to GRAY_LATE at the go cue
-            first_resp = torch.where(
-                self.resp, torch.arange(self.n_steps, device=self.device)[None], self.n_steps
-            ).min(dim=1).values
-            go = torch.where(first_resp < self.n_steps, first_resp, self.lengths).clamp_min(1)
-            frac = (torch.arange(self.n_steps, device=self.device)[None] / go[:, None]).clamp(0, 1)
+            first_resp = (
+                torch.where(
+                    self.resp,
+                    torch.arange(self.n_steps, device=self.device)[None],
+                    self.n_steps,
+                )
+                .min(dim=1)
+                .values
+            )
+            go = torch.where(
+                first_resp < self.n_steps, first_resp, self.lengths
+            ).clamp_min(1)
+            frac = (
+                torch.arange(self.n_steps, device=self.device)[None] / go[:, None]
+            ).clamp(0, 1)
 
             early = torch.tensor(GRAY_EARLY, device=self.device, dtype=rgba.dtype)
             late = torch.tensor(GRAY_LATE, device=self.device, dtype=rgba.dtype)
