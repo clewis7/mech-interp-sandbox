@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from pathlib import Path
 
 TASKS = {
     "go/anti": ["go", "rtgo", "dlygo", "anti", "rtanti", "dlyanti"],
@@ -20,6 +21,12 @@ TASKS = {
     "integration": ["dlygointr", "dlygointl", "dlyantiintr", "dmsintr"],
     "composite": ["dlygointseq", "dmsintseq"],
 }
+
+
+# helper function to get available checkpoints
+def get_checkpointed_tasks(ckpt_dir="checkpoints", suffix=".ckpt"):
+    paths = [str(p.stem) for p in sorted(Path(ckpt_dir).glob(f"*{suffix}"))]
+    return paths
 
 
 @torch.no_grad()

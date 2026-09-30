@@ -128,7 +128,7 @@ def animate():
     if session.done:
         session.projector.update(refit=False)  # keep converging the EMA
         for p, buf in enumerate(buffers):
-            buf.update(session.projector.positions[p], synchronize=(p == 0))
+            buf.update(session.projector.positions[p], synchronize=True)
         return
 
     if session.step >= N_STEPS:
@@ -149,7 +149,7 @@ def animate():
     positions = session.projector.update(refit=refit)
 
     for p, buf in enumerate(buffers):
-        buf.update(positions[p], synchronize=(p == 0))
+        buf.update(positions[p], synchronize=True)
 
     TITLE_TEXT = (
         f"step {session.step:,}   loss {session.loss.item():.3f}   accuracy {session.acc:.3f}   "
@@ -168,7 +168,6 @@ class TitleBar(ImguiWindow):
 
     def update(self):
         global session
-        # TODO: checkpoint model button, save /checkpoints/{self._task}.ckpt
         imgui.text(TITLE_TEXT)
         imgui.same_line()
 
