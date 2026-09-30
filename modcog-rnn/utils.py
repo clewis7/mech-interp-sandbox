@@ -85,6 +85,44 @@ def trajectory_colors(
     return rgba
 
 
+@torch.no_grad()
+def ablation_metrics(model, probe_x, probe_y, lengths, ref_positions=None, alt_positions=None):
+    """Accuracy, response error and trajectory drift for an ablated model.
+
+    Returns a dict:
+        acc        trial accuracy (fixation held throughout AND last step correct)
+        fix        fraction of trials that held fixation correctly
+        resp       fraction whose last step was correct
+        ring_err   median circular error of the final response, in ring units
+        drift      mean distance between reference and alternate trajectories,
+                   NaN if positions aren't given
+    """
+    logits, hidden = model(probe_x)
+    pred = logits.argmax(-1)
+    n_out = logits.shape[-1]
+    rows = torch.arange(len(probe_y), device=probe_y.device)
+    last = lengths - 1
+
+    fix_ok = ~((pred != 0) & (probe_y == 0)).any(dim=1)
+    resp_ok = pred[rows, last] == probe_y[rows, last]
+
+    err = (pred[rows, last] - probe_y[rows, last]).abs()
+    err = torch.minimum(err, n_out - err).float()
+
+    drift = float("nan")
+    if ref_positions is not None and alt_positions is not None:
+        drift = (ref_positions - alt_positions).norm(dim=-1).mean().item()
+
+    return {
+        "acc": (fix_ok & resp_ok).float().mean().item(),
+        "fix": fix_ok.float().mean().item(),
+        "resp": resp_ok.float().mean().item(),
+        "ring_err": err.median().item(),
+        "drift": drift,
+        "h_norm": hidden.norm(dim=-1).mean().item(),
+    }
+
+
 class PCAProjector:
     """Top-k PCA of a fixed probe set's hidden states, refit in place.
 

@@ -1,6 +1,7 @@
 import mechiviz as mv
 
 import copy
+import os
 
 import fastplotlib as fpl
 from imgui_bundle import imgui
@@ -10,57 +11,73 @@ import wgpu
 
 from model import LeakyRNN
 from generate_data import generate_task_data
-from utils import get_checkpointed_tasks, PCAProjector, trajectory_colors
+from utils import get_checkpointed_tasks, PCAProjector, trajectory_colors, ablation_metrics
 
 # ------------------ setup
 
 DEVICE = "cuda"
-CKPT = "checkpoints/go.ckpt"
 N_PROBE = 256
 SEED = 0
+TITLE_TEXT = ""
 
 TRAJ_SCALE = 1.0
 VIEW_LIM = 3.0
 THICKNESS = 1.5
 
-# ------------------ initial models
+task = "go"
+reference = alternate = None
+probe_x = probe_y = lens = colors = None
+w_orig = mask = w_live = None
+vmax = ref_acc = None
+ref_proj = alt_proj = None
+lines = {}
+weights = rs = w_tex = None
+alt_buffers = []
 
-ckpt = torch.load(CKPT, map_location=DEVICE, weights_only=False)
-task = ckpt["task"]
+def load_task(name):
+    """Load a checkpoint and rebuild models, probe set and projections."""
+    global task, reference, alternate, probe_x, probe_y, lens, colors
+    global w_orig, mask, w_live, vmax, ref_proj, alt_proj, ref_acc, TITLE_TEXT
 
-reference = LeakyRNN(**ckpt["config"]).to(DEVICE)
-reference.load_state_dict(ckpt["model"])
-reference.eval().requires_grad_(False)
+    ckpt = torch.load(f"checkpoints/{name}.ckpt", map_location=DEVICE, weights_only=False)
+    task = ckpt["task"]
 
-alternate = copy.deepcopy(reference)
+    reference = LeakyRNN(**ckpt["config"]).to(DEVICE)
+    reference.load_state_dict(ckpt["model"])
+    reference.eval().requires_grad_(False)
+    alternate = copy.deepcopy(reference)
 
-# ------------------ data
+    data = generate_task_data(task, N_PROBE, device=DEVICE, seed=SEED)
+    lens = data["lengths"]
+    valid = torch.arange(data["obs"].shape[1], device=DEVICE)[None] < lens[:, None]
+    probe_x = data["obs"] * valid[..., None]
+    probe_y = data["labels"]
+    colors = trajectory_colors(probe_y.cpu().numpy(), lens.cpu().numpy(), data["n_ring"])
 
-data = generate_task_data(task, N_PROBE, device=DEVICE, seed=SEED)
-lens = data["lengths"]
-valid = torch.arange(data["obs"].shape[1], device=DEVICE)[None] < lens[:, None]
-probe_x = data["obs"] * valid[..., None]
-probe_y = data["labels"]
+    w_orig = reference.w_rec.weight.detach().clone()
+    mask = torch.ones_like(w_orig)
+    w_live = w_orig.clone()
+    vmax = float(abs(w_orig).max())
 
-colors = trajectory_colors(probe_y.cpu().numpy(), lens.cpu().numpy(), data["n_ring"])
+    ref_proj = PCAProjector(reference, probe_x, lens, scale=TRAJ_SCALE)
+    ref_proj.update(refit=True)
 
-w_orig = reference.w_rec.weight.detach().clone()
-mask = torch.ones_like(w_orig)
-w_live = w_orig.clone()
-vmax = float(abs(w_orig).max())
+    alt_proj = PCAProjector(alternate, probe_x, lens, scale=TRAJ_SCALE)
+    alt_proj.basis = ref_proj.basis
+    alt_proj.center = ref_proj.center
+    alt_proj.update(refit=False)
 
-# ------------------ PCA
+    m = ablation_metrics(alternate, probe_x, probe_y, lens,
+                         ref_proj.positions, alt_proj.positions)
+    ref_acc = m["acc"]
 
-ref_proj = PCAProjector(reference, probe_x, lens, scale=TRAJ_SCALE)
-ref_proj.update(refit=True)
+    TITLE_TEXT = (
+        f"acc {ref_acc:.2f} : {m['acc']:.2f}   "
+        f"ring err {m['ring_err']:.1f}   drift {m['drift']:.2f}   "
+        f"cut {int((mask == 0).sum())}/{mask.numel()}"
+    )
 
-alt_proj = PCAProjector(alternate, probe_x, lens, scale=TRAJ_SCALE)
-alt_proj.basis = ref_proj.basis
-alt_proj.center = ref_proj.center
-alt_proj.update(refit=False)
-
-print(f"{task}: probe {N_PROBE} x {ref_proj.n_steps}, "
-      f"var explained {ref_proj.var_explained.sum():.2f}")
+load_task(task)
 
 # ------------------ viz
 
@@ -75,54 +92,55 @@ for s in figure:
     s.axes.visible = False
     s.tooltip.enabled = False
 
-lines = {}
-for name, proj in (("reference model", ref_proj), ("ablation model", alt_proj)):
-    s = figure[name]
-
-    pos = proj.positions.cpu().numpy()
-    lines[name] = s.add_line_collection(
-        data=[pos[p] for p in range(len(pos))],
-        colors=[colors[p] for p in range(len(colors))],
-        thickness=THICKNESS,
-    )
-
 figure["reference model"].controller = figure["ablation model"].controller
 
-weights = figure["weights"].add_image(
+def build_graphics():
+    """Recreate every graphic. Trial length and n_hidden change between tasks."""
+    global weights, rs
+
+    for name, proj in (("reference model", ref_proj), ("ablation model", alt_proj)):
+        s = figure[name]
+        if name in lines:
+            s.remove_graphic(lines[name])
+        pos = proj.positions.cpu().numpy()
+        lines[name] = s.add_line_collection(
+            data=[pos[p] for p in range(len(pos))],
+            colors=[colors[p] for p in range(len(colors))],
+            thickness=THICKNESS,
+        )
+
+    s = figure["weights"]
+    if weights is not None:
+        s.remove_graphic(weights)
+    if rs is not None:
+        s.remove_graphic(rs)
+    weights = s.add_image(
         data=w_live.cpu().numpy(),
         cmap="bwr", vmin=-vmax, vmax=vmax,
         texture_usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
     )
-rs = weights.add_rectangle_selector()
+    rs = weights.add_rectangle_selector()
+
+build_graphics()
 
 # ------------------ shared buffers
 
-w_tex = mv.TorchTensorTexture(shape=w_live.shape)
-w_tex.texture = weights.data.buffer[0, 0]
+def adopt_buffers():
+    """Link the new graphics to shared GPU buffers; needs one render first."""
+    global alt_buffers, w_tex
 
-alt_buffers = [
-    mv.TorchTensorBuffer(shape=g.data.value.shape) for g in lines["ablation model"].graphics
-]
-for buf, g in zip(alt_buffers, lines["ablation model"].graphics):
-    buf.buffer = g.data.buffer
+    alt_buffers = []
+    for g in lines["ablation model"].graphics:
+        buf = mv.TorchTensorBuffer(shape=g.data.value.shape)
+        buf.buffer = g.data.buffer
+        alt_buffers.append(buf)
+
+    w_tex = mv.TorchTensorTexture(shape=w_live.shape)
+    w_tex.texture = weights.data.buffer[0, 0]
+
+adopt_buffers()
 
 # ------------------ funcs
-
-@torch.no_grad()
-def probe_accuracy(model):
-    """Trial accuracy on the probe set: fixation held throughout AND last step correct."""
-    logits, _ = model(probe_x)
-    pred = logits.argmax(-1)
-    fix_ok = ~((pred != 0) & (probe_y == 0)).any(dim=1)
-    rows = torch.arange(len(probe_y), device=DEVICE)
-    resp_ok = pred[rows, lens - 1] == probe_y[rows, lens - 1]
-    return (fix_ok & resp_ok).float().mean().item()
-
-ref_acc = probe_accuracy(reference)
-
-TITLE_TEXT = (
-        f"ref {ref_acc:.3f}   ablated {ref_acc:.3f}")
-
 
 def apply_mask():
     global TITLE_TEXT
@@ -135,9 +153,13 @@ def apply_mask():
 
     w_tex.update(w_live)
 
-    alt_acc = probe_accuracy(alternate)
+    m = ablation_metrics(alternate, probe_x, probe_y, lens,
+                         ref_proj.positions, alt_proj.positions)
     TITLE_TEXT = (
-        f"ref {ref_acc:.3f}   ablated {alt_acc:.3f}")
+        f"acc {ref_acc:.2f} : {m['acc']:.2f}   "
+        f"ring err {m['ring_err']:.1f}   drift {m['drift']:.2f}   "
+        f"cut {int((mask == 0).sum())}/{mask.numel()}"
+    )
 
 # ------------------- UI
 
@@ -157,7 +179,9 @@ class TitleBar(ImguiWindow):
         imgui.set_next_item_width(150)
         changed, self._task_idx = imgui.combo("##task", self._task_idx, self._tasks)
         if changed:
-
+            load_task(self._tasks[self._task_idx])
+            build_graphics()
+            adopt_buffers()
         imgui.same_line()
         if imgui.button("Ablate"):
             # get selection
