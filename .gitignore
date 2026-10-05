@@ -5,3 +5,4 @@ data/
 alpha-fold/work/
 *.pt
 modcog-rnn/checkpoints/
+benchmarks/results
