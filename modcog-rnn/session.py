@@ -4,7 +4,8 @@ import torch.nn.functional as F
 
 from model import LeakyRNN
 from generate_data import generate_task_data
-from utils import PCAProjector, trajectory_colors
+from utils import trajectory_colors
+from prosvd_projector import ProSVDProjector
 
 IGNORE_INDEX = -100
 
@@ -46,6 +47,9 @@ class Session:
         grad_clip=1.0,
         resp_weight=5.0,
         traj_scale=1.0,
+        decay_alpha=1.0,
+        n_cols=2048,
+        center_momentum=0.9,
     ):
         torch.manual_seed(seed)
         self.task = task
@@ -95,7 +99,12 @@ class Session:
         self.opt = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         probe_x, probe_y, probe_lens, _ = self.make_batch(self.probe_idx)
-        self.projector = PCAProjector(self.model, probe_x, probe_lens, scale=traj_scale)
+        self.projector = ProSVDProjector(
+            self.model, probe_x, probe_lens,
+            decay_alpha=decay_alpha, n_cols=n_cols,
+            center_momentum=center_momentum,
+            scale=traj_scale,
+        )
         self.projector.update(refit=True)
 
         self.init_positions = self.projector.positions.cpu().numpy()

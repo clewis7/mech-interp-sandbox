@@ -1,6 +1,7 @@
 import mechiviz as mv
 
 import os
+import imageio.v3 as iio
 import fastplotlib as fpl
 from imgui_bundle import imgui
 from fastplotlib.ui import ImguiWindow
@@ -153,7 +154,7 @@ def animate():
 
     TITLE_TEXT = (
         f"step {session.step:,}   loss {session.loss.item():.3f}   accuracy {session.acc:.3f}   "
-        f"PC1-3 {session.projector.var_explained.sum():.2f}"
+        f"var {session.projector.var_explained.sum():.2f}"
     )
 
 

@@ -2,6 +2,7 @@ import mechiviz as mv
 
 import copy
 import math
+import os
 
 import fastplotlib as fpl
 from imgui_bundle import imgui
@@ -15,6 +16,9 @@ from generate_data import generate_task_data
 from utils import get_checkpointed_tasks, trajectory_colors, ablation_metrics
 
 # ------------------ setup
+
+CKPT_DIR = "checkpoints"
+SCREENSHOTS_DIR = f"{CKPT_DIR}/screenshots"
 
 DEVICE = "cuda"
 N_PROBE = 256

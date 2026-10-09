@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from pathlib import Path
+from scipy.cluster.hierarchy import linkage, leaves_list
 
 TASKS = {
     "go/anti": ["go", "rtgo", "dlygo", "anti", "rtanti", "dlyanti"],
@@ -121,6 +122,16 @@ def ablation_metrics(model, probe_x, probe_y, lengths, ref_positions=None, alt_p
         "drift": drift,
         "h_norm": hidden.norm(dim=-1).mean().item(),
     }
+
+
+def sort(X):
+    row_link = linkage(X, method="average", metric="correlation")
+    col_link = linkage(X.T, method="average", metric="correlation")
+
+    row_order = leaves_list(row_link)
+    col_order = leaves_list(col_link)
+
+    return row_order, col_order
 
 
 class PCAProjector:

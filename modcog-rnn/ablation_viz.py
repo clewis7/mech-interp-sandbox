@@ -8,11 +8,11 @@ from imgui_bundle import imgui
 from fastplotlib.ui import ImguiWindow
 import torch
 import wgpu
+import numpy as np
 
 from model import LeakyRNN
 from generate_data import generate_task_data
-from utils import get_checkpointed_tasks, PCAProjector, trajectory_colors, ablation_metrics
-
+from utils import get_checkpointed_tasks, PCAProjector, trajectory_colors, ablation_metrics, sort
 # ------------------ setup
 
 DEVICE = "cuda"
@@ -27,7 +27,8 @@ THICKNESS = 1.5
 task = "go"
 reference = alternate = None
 probe_x = probe_y = lens = colors = None
-w_orig = mask = w_live = None
+w_orig = mask = w_live = w_show = None
+row_t = col_t = row_order = col_order = None
 vmax = ref_acc = None
 ref_proj = alt_proj = None
 lines = {}
@@ -37,7 +38,8 @@ alt_buffers = []
 def load_task(name):
     """Load a checkpoint and rebuild models, probe set and projections."""
     global task, reference, alternate, probe_x, probe_y, lens, colors
-    global w_orig, mask, w_live, vmax, ref_proj, alt_proj, ref_acc, TITLE_TEXT
+    global w_orig, mask, w_live, w_show, row_order, col_order, row_t, col_t
+    global vmax, ref_proj, alt_proj, ref_acc, TITLE_TEXT
 
     ckpt = torch.load(f"checkpoints/{name}.ckpt", map_location=DEVICE, weights_only=False)
     task = ckpt["task"]
@@ -55,8 +57,14 @@ def load_task(name):
     colors = trajectory_colors(probe_y.cpu().numpy(), lens.cpu().numpy(), data["n_ring"])
 
     w_orig = reference.w_rec.weight.detach().clone()
+
+    row_order, col_order = sort(w_orig.cpu().numpy())
+    row_t = torch.as_tensor(row_order, device=DEVICE)
+    col_t = torch.as_tensor(col_order, device=DEVICE)
+
     mask = torch.ones_like(w_orig)
     w_live = w_orig.clone()
+    w_show = w_live[row_t][:, col_t].contiguous()
     vmax = float(abs(w_orig).max())
 
     ref_proj = PCAProjector(reference, probe_x, lens, scale=TRAJ_SCALE)
@@ -115,7 +123,7 @@ def build_graphics():
     if rs is not None:
         s.remove_graphic(rs)
     weights = s.add_image(
-        data=w_live.cpu().numpy(),
+        data=w_show.cpu().numpy(),
         cmap="bwr", vmin=-vmax, vmax=vmax,
         texture_usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
     )
@@ -151,7 +159,7 @@ def apply_mask():
     for p, buf in enumerate(alt_buffers):
         buf.update(alt_proj.positions[p], synchronize=True)
 
-    w_tex.update(w_live)
+    w_tex.update(w_live[row_t][:, col_t].contiguous())
 
     m = ablation_metrics(alternate, probe_x, probe_y, lens,
                          ref_proj.positions, alt_proj.positions)
@@ -186,7 +194,9 @@ class TitleBar(ImguiWindow):
         if imgui.button("Ablate"):
             # get selection
             x_idxs, y_idxs = rs.get_selected_indices()
-            mask[x_idxs[0]:x_idxs[-1] + 1, y_idxs[0]:y_idxs[-1] + 1] = 0
+            rows = row_order[x_idxs[0]:x_idxs[-1] + 1]
+            cols = col_order[y_idxs[0]:y_idxs[-1] + 1]
+            mask[np.ix_(rows, cols)] = 0
             apply_mask()
 
         imgui.same_line()
