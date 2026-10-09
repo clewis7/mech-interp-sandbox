@@ -1,6 +1,6 @@
 import math
 
-MODES = ("none", "pan", "zoom", "drag")
+MODES = ("none", "pan", "zoom", "drag", "panzoom")
 
 PAN_RADIUS = 0.3   # fraction of the visible width
 PAN_HZ = 0.5       # circles per second
@@ -23,25 +23,34 @@ def make_driver(mode, fig):
     camera = fig[0, 0].camera
     base = {}
 
+    def pan(elapsed):
+        x0, y0, z0 = base["pos"]
+        w = base["width"]
+        a = 2 * math.pi * PAN_HZ * elapsed
+        camera.local.position = (x0 + PAN_RADIUS * w * math.cos(a), y0 + PAN_RADIUS * w * math.sin(a), z0)
+
+    def zoom(elapsed):
+        s = 0.5 * (1 - math.cos(2 * math.pi * ZOOM_HZ * elapsed))  # 0 -> 1 -> 0
+        camera.zoom = base["zoom"] * (1 + (ZOOM_MAX - 1) * s)
+
+    def drag(elapsed):
+        x0, y0, z0 = base["pos"]
+        camera.local.position = (x0 + 0.5 * DRAG_WIDTH * base["width"] * _triangle(DRAG_HZ * elapsed), y0, z0)
+
+    steps = {
+        "pan": (pan,),
+        "zoom": (zoom,),
+        "drag": (drag,),
+        "panzoom": (pan, zoom),
+    }[mode]
+
     def drive(elapsed):
         # capture the auto-scaled view on the first call, then move relative to it
         if not base:
             base["pos"] = tuple(camera.local.position)
             base["width"] = camera.width
             base["zoom"] = camera.zoom
-
-        x0, y0, z0 = base["pos"]
-        w = base["width"]
-
-        if mode == "pan":
-            a = 2 * math.pi * PAN_HZ * elapsed
-            camera.local.position = (x0 + PAN_RADIUS * w * math.cos(a), y0 + PAN_RADIUS * w * math.sin(a), z0)
-
-        elif mode == "zoom":
-            s = 0.5 * (1 - math.cos(2 * math.pi * ZOOM_HZ * elapsed))  # 0 -> 1 -> 0
-            camera.zoom = base["zoom"] * (1 + (ZOOM_MAX - 1) * s)
-
-        elif mode == "drag":
-            camera.local.position = (x0 + 0.5 * DRAG_WIDTH * w * _triangle(DRAG_HZ * elapsed), y0, z0)
+        for step in steps:
+            step(elapsed)
 
     return drive
