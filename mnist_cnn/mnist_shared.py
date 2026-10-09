@@ -1,4 +1,4 @@
-import branchpoint as bp
+import mechiviz as bp
 import fastplotlib as fpl
 import torch
 import torch.nn as nn
@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torchvision import datasets, transforms
 import numpy as np
 from tqdm import tqdm
+import wgpu
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
@@ -62,25 +63,25 @@ for s in mnist_fig:
     s.toolbar = False
 
 inputs = mnist_fig["input"].add_image_grid(data=[np.full((28, 28), np.nan, dtype=np.float32) for _ in range(N)],
-                                           shape=(8, 2), separation=(2, 2))
+                                           shape=(8, 2), separation=(2, 2), usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 conv1 = mnist_fig["conv1 activations"].add_image_grid(
-    data=[np.full((28, 28), np.nan, dtype=np.float32) for _ in range(32)], shape=(8, 4), separation=(2, 2))
+    data=[np.full((28, 28), np.nan, dtype=np.float32) for _ in range(32)], shape=(8, 4), separation=(2, 2), usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 conv2 = mnist_fig["conv2 activations"].add_image_grid(
-    data=[np.full((14, 14), np.nan, dtype=np.float32) for _ in range(64)], shape=(8, 8), separation=(2, 2))
+    data=[np.full((14, 14), np.nan, dtype=np.float32) for _ in range(64)], shape=(8, 8), separation=(2, 2), usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 outputs = mnist_fig["output"].add_image_grid(
     data=[np.zeros((28, 28), dtype=np.float32) for _ in range(10)],
-    shape=(5, 2), separation=(2, 2), vmin=-0.42, vmax=2.82)
+    shape=(5, 2), separation=(2, 2), vmin=-0.42, vmax=2.82, usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 
-input_textures = [bp.TorchTensorTexture(28, 28, fmt="r32float") for _ in range(N)]
+input_textures = [bp.TorchTensorTexture((28, 28)) for _ in range(N)]
 for g, t in zip(inputs, input_textures):
     t.texture = g.data.buffer[0, 0]
-conv1_textures = [bp.TorchTensorTexture(28, 28, fmt="r32float") for _ in range(32)]
+conv1_textures = [bp.TorchTensorTexture((28, 28)) for _ in range(32)]
 for g, t in zip(conv1, conv1_textures):
     t.texture = g.data.buffer[0, 0]
-conv2_textures = [bp.TorchTensorTexture(14, 14, fmt="r32float") for _ in range(64)]
+conv2_textures = [bp.TorchTensorTexture((14, 14)) for _ in range(64)]
 for g, t in zip(conv2, conv2_textures):
     t.texture = g.data.buffer[0, 0]
-output_textures = [bp.TorchTensorTexture(28, 28, fmt="r32float") for _ in range(10)]
+output_textures = [bp.TorchTensorTexture((28, 28)) for _ in range(10)]
 for g, t in zip(outputs, output_textures):
     t.texture = g.data.buffer[0, 0]
 
