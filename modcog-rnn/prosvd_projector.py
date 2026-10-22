@@ -20,17 +20,20 @@ class ProSVDProjector:
     n_components : int
         proSVD's k. 3 for (x, y, z) line positions.
     decay_alpha : float
-        proSVD's forgetting factor, in (0, 1]. 1.0 keeps all history; lower
-        values let the basis track the current representation more closely,
-        which is what you want early in training when it is moving fast.
+        proSVD's forgetting factor, in (0, 1]. Singular values are multiplied
+        by it on every update, so an update m refits ago carries weight
+        alpha**(2m) in variance. 1.0 keeps all history, which makes the basis
+        a running average over every representation the model has ever had -
+        fine for a stationary stream, wrong for a model that is still training.
+        0.9 with a refit every ~25 steps forgets over a few hundred steps.
     n_cols : int or None
         Columns sampled from the probe set per update. proSVD's cost is linear
         in this, and the whole probe set is far more than the basis needs.
         None uses every valid timestep.
     center_momentum : float
-        EMA on the mean that is subtracted before projecting. A mean that jumps
-        between updates reads as the whole cloud translating, so it is smoothed
-        separately from the basis.
+        EMA on the mean that is subtracted before both the proSVD update and
+        the projection. A mean that jumps between updates reads as the whole
+        cloud translating, so it is smoothed rather than taken per frame.
     scale : float
         Projections are rescaled so the cloud keeps this mean radius, which
         lets the camera stay fixed while ||h|| changes during training.
@@ -39,17 +42,17 @@ class ProSVDProjector:
     """
 
     def __init__(
-        self,
-        model,
-        x,
-        lengths,
-        n_components=3,
-        decay_alpha=1.0,
-        n_cols=2048,
-        center_momentum=0.9,
-        scale=1.0,
-        smooth=0.0,
-        seed=0,
+            self,
+            model,
+            x,
+            lengths,
+            n_components=3,
+            decay_alpha=0.9,
+            n_cols=512,
+            center_momentum=0.9,
+            scale=1.0,
+            smooth=0.0,
+            seed=0,
     ):
         self.model = model
         self.x = x
@@ -69,12 +72,13 @@ class ProSVDProjector:
         self.freeze_idx = torch.minimum(steps[None], (lengths - 1)[:, None])
 
         self.positions = torch.zeros(self.n_probe, self.n_steps, 3, device=self.device)
-        self.basis = None          # (n_hidden, k) on device
-        self.center = None         # (n_hidden,) on device
+        self.basis = None  # (n_hidden, k) on device
+        self.center = None  # (n_hidden,) on device
         self.var_explained = np.zeros(n_components)
 
         self.pro = proSVD(k=n_components, decay_alpha=decay_alpha, trueSVD=True, history=0)
         self._initialized = False
+        self._idx = None  # fixed column subsample, chosen once
 
     @torch.no_grad()
     def hidden(self):
@@ -85,23 +89,40 @@ class ProSVDProjector:
         self.model.train(was_training)
         return h
 
-    def _columns(self, hidden):
-        """Valid hidden states as a (n_hidden, n_cols) numpy array.
+    def _columns(self, flat):
+        """Centered hidden states as a (n_hidden, n_cols) numpy array.
 
         proSVD takes observations as COLUMNS, so this is the transpose of the
-        usual (samples, features) layout.
+        usual (samples, features) layout. The subsample indices are drawn once
+        and reused: the probe set and the valid mask are fixed, so resampling
+        every update would feed proSVD a different random slice each time and
+        the only thing that should be changing is the model.
         """
-        flat = hidden[self.valid]                          # (n_valid, n_hidden)
         if self.n_cols is not None and flat.shape[0] > self.n_cols:
-            idx = self.rng.choice(flat.shape[0], self.n_cols, replace=False)
-            flat = flat[torch.as_tensor(idx, device=flat.device)]
+            if self._idx is None:
+                idx = self.rng.choice(flat.shape[0], self.n_cols, replace=False)
+                self._idx = torch.as_tensor(idx, device=flat.device)
+            flat = flat[self._idx]
         return flat.T.contiguous().cpu().numpy().astype(np.float64)
 
     @torch.no_grad()
     def refit(self, hidden=None):
         """Advance the streaming basis by one proSVD update."""
         hidden = self.hidden() if hidden is None else hidden
-        cols = self._columns(hidden)
+        flat = hidden[self.valid]
+
+        # Center BEFORE proSVD sees the data. softplus units are all positive,
+        # so the mean is a large vector that grows with ||h|| over training; fed
+        # raw, proSVD spends a basis vector on that mean direction, which
+        # update() then subtracts off again, leaving an effectively (k-1)
+        # dimensional view that degrades as training proceeds.
+        mean = flat.mean(0)
+        if self.center is None:
+            self.center = mean.clone()
+        else:
+            self.center.mul_(self.center_momentum).add_(mean, alpha=1 - self.center_momentum)
+
+        cols = self._columns(flat - self.center)
 
         if not self._initialized:
             self.pro.initialize(cols)
@@ -116,12 +137,6 @@ class ProSVDProjector:
         self.basis = torch.as_tensor(
             self.pro.Q, dtype=hidden.dtype, device=self.device
         )
-
-        mean = hidden[self.valid].mean(0)
-        if self.center is None:
-            self.center = mean
-        else:
-            self.center.mul_(self.center_momentum).add_(mean, alpha=1 - self.center_momentum)
 
         s = self.pro.S if hasattr(self.pro, "S") else None
         if s is not None:
@@ -152,6 +167,41 @@ class ProSVDProjector:
             self.positions[..., : self.k].copy_(proj)
         return self.positions
 
-    def line_data(self):
-        """(P, T, 3) numpy positions for creating the graphics before adoption."""
-        return self.positions.cpu().numpy()
+    @torch.no_grad()
+    def diagnostics(self, hidden=None):
+        """Is the streaming basis still tracking the current representation?
+
+        captured  fraction of the current centered variance the basis spans.
+                  Should sit near what an independent PCA gets. Falling over
+                  training means the basis is stale, the mean has eaten a
+                  dimension, or both.
+        instant   the same fraction for a fresh independent PCA of the current
+                  states - the ceiling. captured / instant is the real score.
+        gap       largest principal angle (degrees) between the proSVD basis
+                  and that fresh PCA subspace. 0 = same plane, 90 = orthogonal.
+        orth      ||Q.T Q - I||_max, numerical drift in Q over many updates.
+        step      how far the basis rotated since the previous update.
+        """
+        hidden = self.hidden() if hidden is None else hidden
+        c = hidden[self.valid] - self.center
+        total = c.pow(2).sum().clamp_min(1e-12)
+
+        _, _, v = torch.pca_lowrank(c, q=self.k, center=False)
+
+        cos = torch.linalg.svdvals(self.basis.T @ v).clamp(-1, 1)
+        q = self.pro.Q
+
+        prev = getattr(self.pro, "Q_prev", None)
+        step = (
+            float(np.rad2deg(np.arccos(np.clip(
+                np.linalg.svdvals(prev.T @ q), -1, 1).min())))
+            if prev is not None else 0.0
+        )
+
+        return {
+            "captured": float((c @ self.basis).pow(2).sum() / total),
+            "instant": float((c @ v).pow(2).sum() / total),
+            "gap": float(torch.rad2deg(torch.arccos(cos.min()))),
+            "orth": float(np.abs(q.T @ q - np.eye(self.k)).max()),
+            "step": step,
+        }

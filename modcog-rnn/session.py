@@ -47,8 +47,8 @@ class Session:
         grad_clip=1.0,
         resp_weight=5.0,
         traj_scale=1.0,
-        decay_alpha=1.0,
-        n_cols=2048,
+        decay_alpha=0.9,
+        n_cols=512,
         center_momentum=0.9,
     ):
         torch.manual_seed(seed)

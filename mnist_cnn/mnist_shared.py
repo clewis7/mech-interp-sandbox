@@ -7,6 +7,7 @@ from torchvision import datasets, transforms
 import numpy as np
 from tqdm import tqdm
 import wgpu
+import time
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(0)
@@ -54,7 +55,7 @@ criterion = nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.5)
 
-mnist_fig = fpl.Figure(shape=(1, 4), size=(1000, 600), canvas="offscreen",
+mnist_fig = fpl.Figure(shape=(1, 4), size=(1000, 600), #canvas="offscreen",
                        names=["input", "conv1 activations", "conv2 activations", "output"])
 
 for s in mnist_fig:
@@ -63,14 +64,14 @@ for s in mnist_fig:
     s.toolbar = False
 
 inputs = mnist_fig["input"].add_image_grid(data=[np.full((28, 28), np.nan, dtype=np.float32) for _ in range(N)],
-                                           shape=(8, 2), separation=(2, 2), usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
+                                           shape=(8, 2), separation=(2, 2), texture_usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 conv1 = mnist_fig["conv1 activations"].add_image_grid(
-    data=[np.full((28, 28), np.nan, dtype=np.float32) for _ in range(32)], shape=(8, 4), separation=(2, 2), usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
+    data=[np.full((28, 28), np.nan, dtype=np.float32) for _ in range(32)], shape=(8, 4), separation=(2, 2), texture_usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 conv2 = mnist_fig["conv2 activations"].add_image_grid(
-    data=[np.full((14, 14), np.nan, dtype=np.float32) for _ in range(64)], shape=(8, 8), separation=(2, 2), usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
+    data=[np.full((14, 14), np.nan, dtype=np.float32) for _ in range(64)], shape=(8, 8), separation=(2, 2), texture_usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 outputs = mnist_fig["output"].add_image_grid(
     data=[np.zeros((28, 28), dtype=np.float32) for _ in range(10)],
-    shape=(5, 2), separation=(2, 2), vmin=-0.42, vmax=2.82, usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
+    shape=(5, 2), separation=(2, 2), vmin=-0.42, vmax=2.82, texture_usage=wgpu.TextureUsage.COPY_DST | wgpu.TextureUsage.TEXTURE_BINDING)
 
 input_textures = [bp.TorchTensorTexture((28, 28)) for _ in range(N)]
 for g, t in zip(inputs, input_textures):
@@ -136,20 +137,45 @@ def refresh(model, x, sample=0):
     for i, t in enumerate(output_textures):
         t.update(class_avg[i].flip(0).contiguous())
 
-    mnist_fig.canvas.force_draw()
-
 
 mnist_fig.show()
 
-MAX_STEPS = 500
+MAX_STEPS = 300
+STEPS_PER_FRAME = 1  # train steps between each refresh
+STEP_INTERVAL = 0.05  # seconds between refreshes; video length ~= MAX_STEPS / STEPS_PER_FRAME * STEP_INTERVAL
+pbar = tqdm(total=MAX_STEPS)
+step = 0
+last_time = 0.0
 
-for i in tqdm(range(MAX_STEPS)):
-    x, y = get_batch()
 
-    model.train()
-    optimizer.zero_grad(set_to_none=True)
-    loss = criterion(model(x), y)
-    loss.backward()
-    optimizer.step()
+def train_step():
+    global step, last_time
+    if step >= MAX_STEPS:
+        mnist_fig.stop_recording()  # no-op after the first call
+        return
+
+    # skip this frame if not enough wall-clock time has passed (non-blocking, window stays responsive)
+    now = time.perf_counter()
+    if now - last_time < STEP_INTERVAL:
+        return
+    last_time = now
+
+    for _ in range(STEPS_PER_FRAME):
+        x, y = get_batch()
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+        loss = criterion(model(x), y)
+        loss.backward()
+        optimizer.step()
 
     refresh(model, x)
+    step += STEPS_PER_FRAME
+    pbar.update(STEPS_PER_FRAME)
+
+
+mnist_fig[0, 0].add_animations(train_step)
+mnist_fig.start_recording()
+
+
+if __name__ == "__main__":
+    fpl.loop.run()

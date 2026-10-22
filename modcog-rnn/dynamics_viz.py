@@ -17,7 +17,7 @@ TASK = "go"
 N_TRIALS = 8192
 N_PROBE = 128
 
-N_HIDDEN = 64
+N_HIDDEN = 128
 TAU_MS = 200
 SIGMA_REC = 0.05
 ACTIVATION = "softplus"
@@ -41,7 +41,14 @@ ACC_EVERY = 250
 VIEW_LIM = 3.0
 
 STEPS_PER_FRAME = 5  # training steps between redraws
-REFIT_EVERY = 100  # steps between PCA refits
+REFIT_EVERY = 25        # steps between proSVD updates
+DECAY_ALPHA = 0.9       # proSVD forgetting; 1.0 never forgets
+N_COLS = 512            # probe timesteps per proSVD update
+CENTER_MOMENTUM = 0.9
+
+DIAG = True             # print basis diagnostics
+DIAG_EVERY = 10         # ... every Nth refit
+
 CKPT_DIR = "checkpoints"
 SCREENSHOTS_DIR = f"{CKPT_DIR}/screenshots"
 
@@ -62,6 +69,9 @@ SESSION_KWARGS = dict(
     grad_clip=GRAD_CLIP,
     resp_weight=RESP_WEIGHT,
     traj_scale=TRAJ_SCALE,
+    decay_alpha=DECAY_ALPHA,
+    n_cols=N_COLS,
+    center_momentum=CENTER_MOMENTUM,
 )
 
 session = Session(TASK, **SESSION_KWARGS)

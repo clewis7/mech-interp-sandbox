@@ -28,7 +28,7 @@ from utils import (
 CKPT = Path.home() / "repos/torch_brain/examples/poyo/outputs/2026-10-05/14-33-20/checkpoints/best.pt"
 DATA_ROOT = Path.home() / "brainsets/processed"
 DEVICE = torch.device("cuda")
-NEW_RID = "j_20160405_center_out_reaching" #"c_20131220_center_out_reaching"  # or
+NEW_RID = "c_20131220_center_out_reaching" #"j_20160405_center_out_reaching" #"c_20131220_center_out_reaching"  # or
 
 OUT_DT = 0.01
 OUT_TS = np.arange(0, 1.0, OUT_DT, dtype=np.float32)
@@ -104,9 +104,9 @@ NEW_TRAJ_COLORS = list(TARGET_COLORS[eval_targets])
 
 # ----------------------------- figure
 
-figure = fpl.Figure(shape=(1, 2),
-                    size=(1400, 750),
-                    names=["decoder trajectories", "reach output"],
+figure = fpl.Figure(shape=(2, 1),
+                    size=(300, 650),
+                    names=["decoder latent trajectories", "reach output"],
                     controller_types=["orbit", "panzoom"])
 figure.canvas.set_title("POYO Transfer Learning")
 
@@ -115,7 +115,7 @@ for s in figure:
     s.tooltip.enabled = False
 
 
-sp = figure["decoder trajectories"]
+sp = figure["decoder latent trajectories"]
 sp.add_line_collection(bg_traj, colors=list(BG_COLORS), thickness=1.0, name="background")
 sp.add_line_collection(list(NEW_TRAJ.cpu().numpy()), colors=NEW_TRAJ_COLORS, thickness=1.5, name="new")
 
@@ -140,7 +140,7 @@ def make_buffer(g):
 
 def adopt_buffers():
     global traj_buffers, path_buffers
-    traj_buffers = [make_buffer(g) for g in figure["decoder trajectories"]["new"].graphics]
+    traj_buffers = [make_buffer(g) for g in figure["decoder latent trajectories"]["new"].graphics]
     path_buffers = [make_buffer(g) for g in figure["reach output"]["pred"].graphics]
 
 
@@ -204,10 +204,10 @@ class TitleBar(ImguiWindow):
         imgui.text(f"{NEW_RID.replace('_center_out_reaching', '')}   {TITLE_TEXT}")
         imgui.same_line()
 
-        avail = imgui.get_content_region_avail().x
-        imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + avail - 100)
-        if imgui.button("Reset"):
-            reset()
+        # avail = imgui.get_content_region_avail().x
+        # imgui.set_cursor_pos_x(imgui.get_cursor_pos_x() + avail - 100)
+        # if imgui.button("Reset"):
+        #     reset()
 
 
 # make GUI instance
