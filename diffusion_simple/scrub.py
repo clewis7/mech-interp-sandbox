@@ -51,7 +51,7 @@ figure.canvas.set_title("Scrub Samples")
 figure["samples"].axes.visible = False
 figure["samples"].tooltip.enabled = False
 figure["samples"].camera.local.scale_y = -1
-figure["samples"].toolbar = False
+#figure["samples"].toolbar = False
 
 imgs0 = to_images(cache[0])                     # (N, 64, 64, 3) in [0, 1]
 

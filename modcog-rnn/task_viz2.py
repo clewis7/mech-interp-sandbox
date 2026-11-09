@@ -8,8 +8,8 @@ from imgui_bundle import imgui
 import Mod_Cog.mod_cog_tasks as mct
 from generate_data import generate_task_data
 
-parser = argparse.ArgumentParser(description="Animate one Mod-Cog task trial")
-parser.add_argument("task", help="task name, e.g. dlygo")
+parser = argparse.ArgumentParser(description="Make stills of one Mod-Cog task trial")
+parser.add_argument("task", help="task name, e.g. go, goseqr")
 parser.add_argument("--trial", type=int, default=0, help="which trial of the task")
 parser.add_argument("--seed", type=int, default=0, help="env seed")
 args = parser.parse_args()
@@ -19,22 +19,18 @@ N_RING = 16
 FIX_INDEX = 0
 SLICES = {"mod1": slice(1, 1 + N_RING), "mod2": slice(1 + N_RING, 1 + 2 * N_RING)}
 RADII = {"mod1": 1.0, "mod2": 1.6}
-PERIOD_POS = np.array([[1.9, 1.9, 0.0]], dtype=np.float32)  # upper right corner
 
 OFF_COLOR = np.array([0.25, 0.25, 0.25, 1.0], dtype=np.float32)
 ON_COLORS = {
-    "fix": np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+    "fix": np.array([1.0, 0.15, 0.15, 1.0], dtype=np.float32),  # red when fixation is on
     "mod1": np.array([0.2, 0.7, 1.0, 1.0], dtype=np.float32),
     "mod2": np.array([1.0, 0.5, 0.1, 1.0], dtype=np.float32),
     "resp": np.array([0.3, 1.0, 0.4, 1.0], dtype=np.float32),
 }
 RESP_RADIUS = 1.0
-GO_COLOR = np.array([0.2, 0.9, 0.3, 1.0], dtype=np.float32)
-HOLD_COLOR = np.array([0.2, 0.4, 1.0, 1.0], dtype=np.float32)
 GUIDE_COLOR = (0.4, 0.4, 0.4, 0.5)
 BASE_SIZE = 8.0
 MAX_SIZE = 24.0
-PERIOD_SIZE = 18.0
 INPUT_FLOOR = 0.3  # inputs are noisy; only show activity above this
 GO_THRESHOLD = 0.5  # fixation input below this = go cue
 
@@ -76,6 +72,29 @@ resp = np.zeros((len(labels), N_RING + 1), dtype=np.float32)
 valid = labels >= 0
 resp[np.where(valid)[0], labels[valid]] = 1.0
 is_go = ob[:, FIX_INDEX] < GO_THRESHOLD  # fixation cue off = go period
+is_stim = (ob[:, 1 : 1 + 2 * N_RING] > INPUT_FLOOR).any(axis=1)
+
+# key frames for the stills
+stim_on = int(np.argmax(is_stim[:length]))
+go_on = int(np.argmax(is_go[:length]))
+end = length - 1
+KEY_FRAMES = {
+    "fixation": max(stim_on - 1, 0),
+    "stimulus": stim_on,
+    "go cue": go_on,
+    "mid response": (go_on + end) // 2,
+    "end": end,
+}
+print("key frames:", KEY_FRAMES)
+
+
+def epoch_label(t):
+    if is_go[t]:
+        return "response"
+    if is_stim[t]:
+        return "stimulus"
+    return "fixation"
+
 
 # ---------------------------------------------------------------- figure
 figure = fpl.Figure(
@@ -93,7 +112,7 @@ graphics["fix"] = subplot.add_scatter(
     np.zeros((1, 3), dtype=np.float32), colors=colors, sizes=sizes
 )
 
-text_graphic = subplot.add_text(f"t = 0", font_size=15, offset=(-1, 2, 0))
+text_graphic = subplot.add_text(epoch_label(0), font_size=15, offset=(-1, 2, 0))
 
 resp_subplot = figure[1, 0]
 resp_subplot.add_line(guide_circle(RESP_RADIUS), colors=GUIDE_COLOR, thickness=1.0)
@@ -113,7 +132,7 @@ for sp in figure:
     sp.controller.enabled = False
 
 
-# ---------------------------------------------------------------- animation
+# ---------------------------------------------------------------- update
 def update_frame(t):
     for key, sl in (("mod1", SLICES["mod1"]), ("mod2", SLICES["mod2"]), ("fix", [FIX_INDEX])):
         colors, sizes = activation_style(ob[t, sl], ON_COLORS[key], floor=INPUT_FLOOR)
@@ -125,10 +144,10 @@ def update_frame(t):
         graphics[key].colors[:] = colors
         graphics[key].sizes[:] = sizes
 
-    text_graphic.text = f"t = {t}"
+    text_graphic.text = epoch_label(t)
 
 
-class TimeSlider(ImguiWindow):
+class StillsControls(ImguiWindow):
     def __init__(self):
         super().__init__()
         self.t = 0
@@ -141,7 +160,20 @@ class TimeSlider(ImguiWindow):
             self.t = t
             update_frame(t)
 
+        # jump to key frames
+        for name, kt in KEY_FRAMES.items():
+            if imgui.button(name):
+                self.t = kt
+                update_frame(kt)
+            imgui.same_line()
 
-figure.add_imgui_window(TimeSlider(), size=45, location="bottom", title=None)
+        # save whatever is currently shown
+        if imgui.button("save png"):
+            fname = f"{args.task}_t{self.t:03d}_{epoch_label(self.t)}.png"
+            figure.export(fname)
+            print("saved", fname)
+
+
+figure.add_imgui_window(StillsControls(), size=80, location="bottom", title=None)
 figure.show(autoscale=False)
 fpl.loop.run()

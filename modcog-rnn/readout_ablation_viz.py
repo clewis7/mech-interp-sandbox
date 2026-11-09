@@ -29,6 +29,12 @@ VIEW_LIM = 0.8
 THICKNESS = 1.5
 RING_RADIUS = 1.0
 
+LABEL_TOP = "HIDDEN"
+LABEL_LEFT = "READOUT"
+LABEL_SIZE = 12
+LABEL_PAD = 4            # matrix cells between the image edge and the text
+LABEL_COLOR = "w"
+
 task = "go"
 reference = alternate = None
 probe_x = probe_y = lens = colors = None
@@ -39,6 +45,7 @@ ref_pos = alt_pos = None
 lines = {}
 weights = rs = w_tex = None
 alt_buffers = []
+w_labels = []
 
 
 @torch.no_grad()
@@ -164,6 +171,22 @@ def build_graphics():
     )
     rs = weights.add_linear_selector(axis="y", thickness=1.5)
     s.camera.maintain_aspect = False  # (n_out, n_hidden) is wide and short
+
+    for t in w_labels:
+        s.remove_graphic(t)
+    w_labels.clear()
+
+    # row 0 sits at the top, so negative y is above the image
+    n_rows, n_cols = w_live.shape
+    w_labels.append(s.add_text(
+        LABEL_TOP, font_size=LABEL_SIZE, face_color=LABEL_COLOR,
+        offset=(n_cols / 2, n_rows + 1, 0), anchor="bottom-center",
+    ))
+    w_labels.append(s.add_text(
+        LABEL_LEFT, font_size=LABEL_SIZE, face_color=LABEL_COLOR,
+        offset=(-LABEL_PAD, n_rows / 2, 0), anchor="middle",
+    ))
+    w_labels[-1].rotation = (0, 0, 2 ** -0.5, 2 ** -0.5)
     s.auto_scale()
 
 

@@ -24,6 +24,14 @@ TRAJ_SCALE = 1.0
 VIEW_LIM = 3.0
 THICKNESS = 1.5
 
+# w_rec is (out_features, in_features), so W[i, j] runs from unit j to unit i:
+# columns are the presynaptic axis, rows the postsynaptic one.
+LABEL_TOP = "TO"
+LABEL_LEFT = "OUT"
+LABEL_SIZE = 12
+LABEL_PAD = 4            # matrix cells between the image edge and the text
+LABEL_COLOR = "w"
+
 task = "go"
 reference = alternate = None
 probe_x = probe_y = lens = colors = None
@@ -34,6 +42,7 @@ ref_proj = alt_proj = None
 lines = {}
 weights = rs = w_tex = None
 alt_buffers = []
+w_labels = []
 
 def load_task(name):
     """Load a checkpoint and rebuild models, probe set and projections."""
@@ -104,7 +113,7 @@ figure["reference model"].controller = figure["ablation model"].controller
 
 def build_graphics():
     """Recreate every graphic. Trial length and n_hidden change between tasks."""
-    global weights, rs
+    global weights, rs, w_labels
 
     for name, proj in (("reference model", ref_proj), ("ablation model", alt_proj)):
         s = figure[name]
@@ -128,6 +137,23 @@ def build_graphics():
         texture_usage=wgpu.TextureUsage.TEXTURE_BINDING | wgpu.TextureUsage.COPY_DST,
     )
     rs = weights.add_rectangle_selector()
+
+    for t in w_labels:
+        s.remove_graphic(t)
+    w_labels.clear()
+
+    # row 0 sits at the top, so negative y is above the image
+    n_rows, n_cols = w_show.shape
+    w_labels.append(s.add_text(
+        LABEL_TOP, font_size=LABEL_SIZE, face_color=LABEL_COLOR,
+        offset=(n_cols / 2, n_rows + 4.5, 0), anchor="bottom-center",
+    ))
+    w_labels.append(s.add_text(
+        LABEL_LEFT, font_size=LABEL_SIZE, face_color=LABEL_COLOR,
+        offset=(-LABEL_PAD, n_rows / 2, 0), anchor="middle",
+    ))
+    w_labels[-1].rotation = (0, 0, 2 ** -0.5, 2 ** -0.5)
+    s.auto_scale()
 
 build_graphics()
 

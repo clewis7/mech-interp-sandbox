@@ -5,9 +5,9 @@ import fastplotlib as fpl
 
 import numpy as np
 import torch
+import wgpu
 from fastplotlib.ui import ImguiWindow
 from imgui_bundle import imgui
-import wgpu
 
 from model import load_model, to_images
 
@@ -91,7 +91,13 @@ class Branch:
 
 
 ref, alt = Branch(), Branch()
-kick_at = None  # index where alt was kicked, None if unkicked
+kick_at = None                                  # index of the kick, None if unkicked
+noise = torch.zeros(*SHAPE, device=DEV)         # std 1, held fixed while sigma moves
+
+
+def new_noise():
+    global noise
+    noise = torch.randn(*SHAPE, device=DEV)
 
 
 def reseed():
@@ -100,17 +106,21 @@ def reseed():
     z = torch.randn(N, *SHAPE, device=DEV)
     ref.seed(z)
     alt.seed(z.clone())
+    new_noise()
     kick_at = None
 
 
-@torch.no_grad()
-def apply_kick(k, disp, upto):
-    """Copy the reference up to k, displace once there, integrate alt onward.
+def kick_vector():
+    """The displacement to apply, from whichever tab is active."""
+    if P["mode"] == "pca":
+        c = torch.tensor(P["disp"], device=DEV, dtype=torch.float32)
+        return (B3 @ c).view(*SHAPE)
+    return P["sigma"] * noise
 
-    `disp` is the displacement in PC coordinates, in the same units as the
-    plot. B3 is orthonormal, so the kicked point lands exactly `disp` away
-    from the reference point in the PCA view.
-    """
+
+@torch.no_grad()
+def apply_kick(k, upto):
+    """Copy the reference up to k, displace once there, integrate alt onward."""
     global kick_at
     ref.advance(max(k, upto))
 
@@ -119,9 +129,9 @@ def apply_kick(k, disp, upto):
     alt.p[k + 1:] = NAN
     alt.frontier = k
 
-    c = torch.tensor(disp, device=DEV, dtype=torch.float32)
-    if c.norm() > 1e-8:
-        alt.x[k] = ref.x[k] + (B3 @ c).view(*SHAPE)
+    d = kick_vector()
+    if d.norm() > 1e-8:
+        alt.x[k] = ref.x[k] + d
         alt.p[k] = embed(alt.x[k])[0]
         kick_at = k
     else:
@@ -220,9 +230,10 @@ def rgb_diff(k):
 
 # ---------------------------------------------------------------- GUI
 
-P = {"t": 0, "k": 15, "disp": [0.0, 0.0, 0.0]}
+P = {"t": 0, "k": 15, "disp": [0.0, 0.0, 0.0], "mode": "pca", "sigma": 0.0}
 KICK_RANGE = 0.5
 LIM = [KICK_RANGE * float(s) for s in SIGMA]
+SIGMA_LIM = 0.5             # per-element noise std; x itself is ~unit scale at t=0
 
 
 def draw():
@@ -245,7 +256,7 @@ def draw():
 
 def rebuild():
     global diff_scale
-    apply_kick(P["k"], P["disp"], P["t"])
+    apply_kick(P["k"], P["t"])
     n = alt.frontier + 1
     diff_scale = max(float((alt.x[:n] - ref.x[:n]).abs().max()), 1e-3)
     draw()
@@ -255,22 +266,46 @@ class Params(ImguiWindow):
     def update(self):
         touched = False
 
-        imgui.text("displacement")
-        for i in range(3):
-            imgui.set_next_item_width(140)
-            ch, P["disp"][i] = imgui.slider_float(
-                f"PC{i + 1}", P["disp"][i], -LIM[i], LIM[i], "%.1f"
-            )
-            touched |= ch
+        if imgui.begin_tab_bar("perturbation"):
+            if imgui.begin_tab_item("PCA direction")[0]:
+                if P["mode"] != "pca":
+                    P["mode"] = "pca"
+                    touched = True
+                for i in range(3):
+                    imgui.set_next_item_width(140)
+                    ch, P["disp"][i] = imgui.slider_float(
+                        f"PC{i + 1}", P["disp"][i], -LIM[i], LIM[i], "%.1f"
+                    )
+                    touched |= ch
+                if imgui.button("clear"):
+                    P["disp"] = [0.0, 0.0, 0.0]
+                    touched = True
+                imgui.end_tab_item()
+
+            if imgui.begin_tab_item("Add noise")[0]:
+                if P["mode"] != "noise":
+                    P["mode"] = "noise"
+                    touched = True
+                imgui.set_next_item_width(140)
+                ch, P["sigma"] = imgui.slider_float(
+                    "sigma", P["sigma"], 0.0, SIGMA_LIM, "%.2f"
+                )
+                touched |= ch
+                if imgui.button("resample"):
+                    new_noise()
+                    touched = True
+                imgui.same_line()
+                if imgui.button("clear"):
+                    P["sigma"] = 0.0
+                    touched = True
+                imgui.end_tab_item()
+
+            imgui.end_tab_bar()
 
         imgui.separator()
         imgui.set_next_item_width(140)
         ch, P["k"] = imgui.slider_int("kick at", P["k"], 0, T)
         touched |= ch
-
-        if imgui.button("clear kick"):
-            P["disp"] = [0.0, 0.0, 0.0]
-            touched = True
 
         if touched:
             rebuild()
@@ -305,7 +340,7 @@ flags = (
 )
 
 figure.add_imgui_window(TimeBar(), location="bottom", size=40, title=None, window_flags=flags)
-figure.add_imgui_window(Params(), location="right", size=190, title="kick")
+figure.add_imgui_window(Params(), location="right", size=210, title="kick")
 figure.imgui_windows["bottom"]._draw_resize_handle = lambda: None
 
 rebuild()
