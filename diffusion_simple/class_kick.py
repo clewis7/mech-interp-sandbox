@@ -165,7 +165,6 @@ def reseed():
     ref.seed(z)
     alt.seed(z.clone())
 
-
 def kick_vector():
     c = torch.tensor(P["disp"], device=DEV, dtype=torch.float32)
     return (Q @ c).view(*SHAPE)
@@ -665,6 +664,9 @@ figure.imgui_windows["bottom"]._draw_resize_handle = lambda: None
 
 rebuild()
 figure.show()
+
+for i in range(3):
+    reseed()
 
 if __name__ == "__main__":
     fpl.loop.run()

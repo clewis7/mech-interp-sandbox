@@ -5,9 +5,10 @@ import numpy as np
 import torch
 
 # ---- paths ----
-BUNDLE_PATH = Path("replay_bundle.pt")
+PROBE50 = True  # True: 50k val images, one snapshot per epoch; False: old 10k probe (replay bundle)
+BUNDLE_PATH = Path("probe50_bundle.pt" if PROBE50 else "replay_bundle.pt")
 GROUPS_PATH = Path("class_groups_dogsplit.json")  # from make_groups.py
-OUT_PATH = Path("neuron_stability.json")
+OUT_PATH = Path("neuron_stability50.json" if PROBE50 else "neuron_stability.json")
 
 # ---- config ----
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -27,13 +28,14 @@ SEED = 0
 bundle = torch.load(BUNDLE_PATH)
 groups = json.loads(GROUPS_PATH.read_text())
 n_groups = len(groups["groups"])
-class_names = bundle["class_names"]
+class_names = bundle.get("class_names", [str(c) for c in range(1000)])  # probe50 bundle has no names: print ids
 epochs = bundle["epochs"].numpy()
 K = bundle["k"]
 probe_labels = bundle["probe_labels"].long().to(DEVICE)
 n_probe = len(probe_labels)
 img_group = torch.tensor(groups["class_to_group"], device=DEVICE)[probe_labels]
 top_idx = {m: bundle["top_idx"][m].long().to(DEVICE) for m in MODELS}  # (S, C, K)
+top_val = {m: bundle["top_val"][m].float().to(DEVICE) for m in MODELS}
 base = torch.bincount(img_group, minlength=n_groups).float() / n_probe  # group base rates
 gen = torch.Generator(device=DEVICE).manual_seed(SEED)
 
@@ -73,7 +75,12 @@ print(f"window epochs {epochs[win[0]]:.1f}-{epochs[win_next[-1]]:.1f}, {len(win)
 results = {}
 for m in MODELS:
     shares = shares_of(top_idx[m])  # (S, C, G)
-    formed = (shares[s_start] - base).norm(dim=-1) > strength_thresh
+    # dead neurons output the same value (usually 0) on every image: their "top-64" is a tie, so it's the same
+    # arbitrary set every epoch and would look perfectly stable. Keep only neurons that respond in the window.
+    v = top_val[m][[s_start] + win_next]  # (W, C, K)
+    alive = ((v[..., 0] > 0) & (v[..., 0] > v[..., -1])).all(0)  # positive and not tied, at every window step
+    print(f"{m}: {(~alive).sum().item()} dead or tied neurons excluded")
+    formed = ((shares[s_start] - base).norm(dim=-1) > strength_thresh) & alive
     step = torch.stack([centered_cos(shares[a], shares[b]) for a, b in zip(win, win_next)]).mean(0)
     start_end = centered_cos(shares[s_start], shares[s_end])
     ids = formed.nonzero().squeeze(1)

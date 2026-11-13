@@ -10,9 +10,10 @@ from fastplotlib.ui import ImguiWindow
 from imgui_bundle import imgui
 
 # ---- paths ----
-BUNDLE_PATH = Path("replay_bundle.pt")
+BUNDLE_PATH = Path("probe50_bundle.pt")  # top-64 per neuron on all 50k val images, one snapshot per epoch
+VAL_IMGS_PATH = Path("val_imgs.npy")  # the 50k val images (the bundle stores indices into these)
 GROUPS_PATH = Path("class_groups_dogsplit.json")  # from make_groups.py
-STABILITY_PATH = Path("neuron_stability.json")  # from neuron_stability.py
+STABILITY_PATH = Path("neuron_stability50.json")  # from neuron_stability.py with PROBE50 = True
 
 # ---- config ----
 DEVICE = "cuda"
@@ -57,9 +58,9 @@ stability = json.loads(STABILITY_PATH.read_text())
 epochs = bundle["epochs"].numpy()
 n_snap = len(epochs)
 K = bundle["k"]
-probe_rgb = bundle["probe_imgs"].to(DEVICE).float() / 255  # (N, 64, 64, 3)
+probe_imgs = torch.from_numpy(np.load(VAL_IMGS_PATH)).to(DEVICE)  # (50000, 64, 64, 3) uint8, ~600 MB
 probe_labels = bundle["probe_labels"].long().to(DEVICE)
-top_idx = {m: bundle["top_idx"][m].to(DEVICE) for m in MODELS}  # (S, C, K) int16
+top_idx = {m: bundle["top_idx"][m].to(DEVICE) for m in MODELS}  # (S, C, K) int32
 
 theme_names = list(THEMES)
 n_themes = len(theme_names)
@@ -105,7 +106,7 @@ SIDE = GRID * CELL
 def tiles(m, n, s):  # -> (SIDE, SIDE, 4) float32 on GPU
     idx = top_idx[m][s, n, :GRID * GRID].long()
     cells = box_rgba[idx][:, None, None, :].expand(-1, CELL, CELL, -1).clone()
-    cells[:, BOX:BOX + IMG, BOX:BOX + IMG, :3] = probe_rgb[idx]
+    cells[:, BOX:BOX + IMG, BOX:BOX + IMG, :3] = probe_imgs[idx].float() / 255
     return cells.view(GRID, GRID, CELL, CELL, 4).permute(0, 2, 1, 3, 4).reshape(SIDE, SIDE, 4)
 
 
